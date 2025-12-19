@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Fire VFX Rig (Mantaflow)",
     "author": "Cursor Agent",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Fire VFX",
     "description": "Create adjustable fire rigs (domain + emitter + shader) with presets.",
@@ -74,6 +74,46 @@ def _get_or_create_material(name: str):
     return mat
 
 
+def _set_color_ramp_elements(color_ramp, elements):
+    """Set ColorRamp elements deterministically.
+
+    Blender doesn't allow removing the last element in some versions, so we:
+    - Ensure at least 1 element exists
+    - Resize to match desired count
+    - Set positions/colors in index order
+    """
+    if color_ramp is None:
+        return
+
+    desired = list(elements)
+    if not desired:
+        return
+
+    cr = color_ramp
+
+    # Ensure at least one element exists.
+    if len(cr.elements) == 0:
+        cr.elements.new(0.0)
+
+    # Grow/shrink to desired length.
+    while len(cr.elements) < len(desired):
+        cr.elements.new(desired[len(cr.elements)][0])
+
+    while len(cr.elements) > len(desired):
+        try:
+            cr.elements.remove(cr.elements[-1])
+        except Exception:
+            break
+
+    # Apply values.
+    for i, (pos, col) in enumerate(desired):
+        try:
+            cr.elements[i].position = float(pos)
+            cr.elements[i].color = col
+        except Exception:
+            pass
+
+
 def _build_volume_shader(mat, flame_strength=25.0, smoke_density=2.0, flame_ramp=((0.0, (0.05, 0.01, 0.0, 1.0)), (0.25, (1.0, 0.35, 0.05, 1.0)), (1.0, (1.0, 1.0, 1.0, 1.0)))):
     """Build a simple, robust Mantaflow volume shader.
 
@@ -104,13 +144,7 @@ def _build_volume_shader(mat, flame_strength=25.0, smoke_density=2.0, flame_ramp
 
     ramp = nodes.new("ShaderNodeValToRGB")
     ramp.location = (-240, 140)
-    # Initialize ramp
-    cr = ramp.color_ramp
-    while len(cr.elements) > 0:
-        cr.elements.remove(cr.elements[0])
-    for pos, col in flame_ramp:
-        el = cr.elements.new(pos)
-        el.color = col
+    _set_color_ramp_elements(ramp.color_ramp, flame_ramp)
 
     # Flame strength: flame * strength
     mult = nodes.new("ShaderNodeMath")
@@ -259,12 +293,40 @@ def _find_rig(context):
 # Presets
 # -----------------------------
 
-PRESETS = {
+BASE_PRESET = {
+    # Lightweight defaults (fast preview). Presets override only what they need.
+    "domain_size": (2.0, 2.0, 3.0),
+    "emitter_scale": (0.07, 0.07, 0.25),
+    "resolution_max": 96,
+    "time_scale": 1.0,
+    "vorticity": 0.7,
+    "use_adaptive_domain": True,
+    "adaptive_margin": 4,
+    "adaptive_additional_res": 0,
+    "use_noise": False,
+    "noise_strength": 1.0,
+    "noise_scale": 2.5,
+    "use_dissolve_smoke": False,
+    "dissolve_speed": 30,
+    "burning_rate": 1.2,
+    "flame_smoke": 0.18,
+    "flow_density": 1.0,
+    "flow_temperature": 1.25,
+    "flow_fuel": 1.15,
+    "use_initial_velocity": True,
+    "velocity_factor": 1.2,
+    "flame_strength": 35.0,
+    "smoke_density": 2.0,
+    "flame_color_low": (0.07, 0.01, 0.0, 1.0),
+    "flame_color_mid": (1.0, 0.42, 0.08, 1.0),
+    "flame_color_high": (1.0, 0.95, 0.85, 1.0),
+}
+
+PRESET_OVERRIDES = {
     "CANDLE": {
         "domain_size": (1.5, 1.5, 2.5),
         "emitter_scale": (0.04, 0.04, 0.10),
-        "resolution_max": 96,
-        "time_scale": 1.0,
+        "resolution_max": 80,
         "vorticity": 0.25,
         "use_noise": True,
         "noise_strength": 0.4,
@@ -280,39 +342,21 @@ PRESETS = {
         "dissolve_speed": 35,
         "use_initial_velocity": False,
         "velocity_factor": 1.0,
-        "flame_color_low": (0.06, 0.01, 0.0, 1.0),
         "flame_color_mid": (1.0, 0.55, 0.12, 1.0),
         "flame_color_high": (1.0, 1.0, 1.0, 1.0),
     },
     "TORCH": {
-        "domain_size": (2.0, 2.0, 3.0),
-        "emitter_scale": (0.07, 0.07, 0.25),
-        "resolution_max": 128,
-        "time_scale": 1.0,
+        "resolution_max": 112,
         "vorticity": 0.8,
         "use_noise": True,
         "noise_strength": 1.0,
         "noise_scale": 2.5,
-        "burning_rate": 1.2,
-        "flame_smoke": 0.18,
-        "flow_density": 1.0,
-        "flow_temperature": 1.25,
-        "flow_fuel": 1.15,
-        "flame_strength": 35.0,
-        "smoke_density": 2.0,
-        "use_dissolve_smoke": False,
-        "dissolve_speed": 30,
-        "use_initial_velocity": True,
         "velocity_factor": 1.5,
-        "flame_color_low": (0.07, 0.01, 0.0, 1.0),
-        "flame_color_mid": (1.0, 0.42, 0.08, 1.0),
-        "flame_color_high": (1.0, 0.95, 0.85, 1.0),
     },
     "CAMPFIRE": {
         "domain_size": (4.0, 4.0, 4.0),
         "emitter_scale": (0.45, 0.45, 0.18),
-        "resolution_max": 160,
-        "time_scale": 1.0,
+        "resolution_max": 144,
         "vorticity": 1.5,
         "use_noise": True,
         "noise_strength": 1.6,
@@ -324,19 +368,13 @@ PRESETS = {
         "flow_fuel": 1.3,
         "flame_strength": 55.0,
         "smoke_density": 3.0,
-        "use_dissolve_smoke": False,
-        "dissolve_speed": 25,
-        "use_initial_velocity": True,
         "velocity_factor": 1.0,
-        "flame_color_low": (0.06, 0.01, 0.0, 1.0),
         "flame_color_mid": (1.0, 0.38, 0.06, 1.0),
-        "flame_color_high": (1.0, 0.95, 0.85, 1.0),
     },
     "BONFIRE": {
         "domain_size": (7.0, 7.0, 7.0),
         "emitter_scale": (0.9, 0.9, 0.35),
-        "resolution_max": 192,
-        "time_scale": 1.0,
+        "resolution_max": 160,
         "vorticity": 2.2,
         "use_noise": True,
         "noise_strength": 2.0,
@@ -348,18 +386,14 @@ PRESETS = {
         "flow_fuel": 1.5,
         "flame_strength": 75.0,
         "smoke_density": 4.2,
-        "use_dissolve_smoke": False,
-        "dissolve_speed": 20,
-        "use_initial_velocity": True,
         "velocity_factor": 1.2,
-        "flame_color_low": (0.05, 0.01, 0.0, 1.0),
         "flame_color_mid": (1.0, 0.30, 0.05, 1.0),
         "flame_color_high": (1.0, 0.9, 0.8, 1.0),
     },
     "EXPLOSION": {
         "domain_size": (10.0, 10.0, 10.0),
         "emitter_scale": (0.6, 0.6, 0.6),
-        "resolution_max": 224,
+        "resolution_max": 176,
         "time_scale": 0.85,
         "vorticity": 3.0,
         "use_noise": True,
@@ -374,7 +408,6 @@ PRESETS = {
         "smoke_density": 6.0,
         "use_dissolve_smoke": True,
         "dissolve_speed": 18,
-        "use_initial_velocity": True,
         "velocity_factor": 2.0,
         "flame_color_low": (0.10, 0.02, 0.0, 1.0),
         "flame_color_mid": (1.0, 0.22, 0.03, 1.0),
@@ -384,10 +417,16 @@ PRESETS = {
 
 
 def _apply_preset_to_settings(settings, preset_id: str):
-    data = PRESETS.get(preset_id)
-    if not data:
-        return
-    for k, v in data.items():
+    # Apply base first for stable diffs and predictable behavior.
+    for k, v in BASE_PRESET.items():
+        if hasattr(settings, k):
+            try:
+                setattr(settings, k, v)
+            except Exception:
+                pass
+
+    overrides = PRESET_OVERRIDES.get(preset_id, {})
+    for k, v in overrides.items():
         if hasattr(settings, k):
             try:
                 setattr(settings, k, v)
@@ -421,6 +460,18 @@ class FIREVFX_Settings(PropertyGroup):
     domain_object_name: StringProperty(name="Domain Object", default="")
     emitter_object_name: StringProperty(name="Emitter Object", default="")
 
+    ui_show_advanced: BoolProperty(
+        name="Show Advanced",
+        default=False,
+        description="Show extra controls (keeps panel lightweight by default).",
+    )
+
+    apply_scale_on_update: BoolProperty(
+        name="Apply Scale",
+        default=False,
+        description="Apply object scale when creating/updating the rig (can be disruptive to selection).",
+    )
+
     # Transform-ish
     domain_size: FloatVectorProperty(
         name="Domain Size",
@@ -441,7 +492,7 @@ class FIREVFX_Settings(PropertyGroup):
     )
 
     # Domain quality & behavior
-    resolution_max: IntProperty(name="Resolution", min=16, max=1024, default=128)
+    resolution_max: IntProperty(name="Resolution", min=16, max=1024, default=96)
     time_scale: FloatProperty(name="Time Scale", min=0.05, max=3.0, default=1.0)
     vorticity: FloatProperty(name="Vorticity", min=0.0, max=10.0, default=0.8)
 
@@ -450,7 +501,7 @@ class FIREVFX_Settings(PropertyGroup):
     adaptive_additional_res: IntProperty(name="Adaptive Additional Res", min=0, max=256, default=0)
 
     # Noise
-    use_noise: BoolProperty(name="Noise", default=True)
+    use_noise: BoolProperty(name="Noise", default=False)
     noise_strength: FloatProperty(name="Noise Strength", min=0.0, max=10.0, default=1.0)
     noise_scale: FloatProperty(name="Noise Scale", min=0.1, max=20.0, default=2.5)
 
@@ -545,19 +596,20 @@ class FIREVFX_OT_create_rig(Operator):
         domain.scale = (settings.domain_size[0] / 2.0, settings.domain_size[1] / 2.0, settings.domain_size[2] / 2.0)
         emitter.scale = settings.emitter_scale
 
-        # Keep transforms applied for stable sims
-        try:
-            bpy.context.view_layer.objects.active = domain
-            domain.select_set(True)
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        except Exception:
-            pass
-        try:
-            bpy.context.view_layer.objects.active = emitter
-            emitter.select_set(True)
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        except Exception:
-            pass
+        # Optional (can be disruptive to selection); off by default for lightweightness.
+        if settings.apply_scale_on_update:
+            try:
+                bpy.context.view_layer.objects.active = domain
+                domain.select_set(True)
+                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            except Exception:
+                pass
+            try:
+                bpy.context.view_layer.objects.active = emitter
+                emitter.select_set(True)
+                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            except Exception:
+                pass
 
         # Fluid settings
         _apply_domain_settings(domain, settings)
@@ -595,19 +647,20 @@ class FIREVFX_OT_update_rig(Operator):
         domain.scale = (settings.domain_size[0] / 2.0, settings.domain_size[1] / 2.0, settings.domain_size[2] / 2.0)
         emitter.scale = settings.emitter_scale
 
-        # Apply transforms (scale only) to avoid changing sim location
-        try:
-            bpy.context.view_layer.objects.active = domain
-            domain.select_set(True)
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        except Exception:
-            pass
-        try:
-            bpy.context.view_layer.objects.active = emitter
-            emitter.select_set(True)
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        except Exception:
-            pass
+        if settings.apply_scale_on_update:
+            # Apply transforms (scale only) to avoid changing sim location.
+            try:
+                bpy.context.view_layer.objects.active = domain
+                domain.select_set(True)
+                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            except Exception:
+                pass
+            try:
+                bpy.context.view_layer.objects.active = emitter
+                emitter.select_set(True)
+                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            except Exception:
+                pass
 
         _apply_domain_settings(domain, settings)
         _apply_flow_settings(emitter, settings)
@@ -694,6 +747,7 @@ class FIREVFX_PT_panel(Panel):
         row = col.row(align=True)
         row.operator("fire_vfx.create_rig", text="Create")
         row.operator("fire_vfx.update_rig", text="Update")
+        col.prop(s, "ui_show_advanced")
 
         layout.separator()
 
@@ -719,29 +773,31 @@ class FIREVFX_PT_panel(Panel):
             box.prop(s, "adaptive_margin")
             box.prop(s, "adaptive_additional_res")
 
-        row = box.row(align=True)
-        row.prop(s, "use_noise")
-        if s.use_noise:
-            box.prop(s, "noise_strength")
-            box.prop(s, "noise_scale")
+        if s.ui_show_advanced:
+            row = box.row(align=True)
+            row.prop(s, "use_noise")
+            if s.use_noise:
+                box.prop(s, "noise_strength")
+                box.prop(s, "noise_scale")
 
-        box.prop(s, "burning_rate")
-        box.prop(s, "flame_smoke")
+            box.prop(s, "burning_rate")
+            box.prop(s, "flame_smoke")
 
-        row = box.row(align=True)
-        row.prop(s, "use_dissolve_smoke")
-        if s.use_dissolve_smoke:
-            box.prop(s, "dissolve_speed")
+            row = box.row(align=True)
+            row.prop(s, "use_dissolve_smoke")
+            if s.use_dissolve_smoke:
+                box.prop(s, "dissolve_speed")
 
         box = layout.box()
         box.label(text="Flow")
         box.prop(s, "flow_density")
         box.prop(s, "flow_temperature")
         box.prop(s, "flow_fuel")
-        row = box.row(align=True)
-        row.prop(s, "use_initial_velocity")
-        if s.use_initial_velocity:
-            box.prop(s, "velocity_factor")
+        if s.ui_show_advanced:
+            row = box.row(align=True)
+            row.prop(s, "use_initial_velocity")
+            if s.use_initial_velocity:
+                box.prop(s, "velocity_factor")
 
         box = layout.box()
         box.label(text="Shading")
@@ -754,6 +810,8 @@ class FIREVFX_PT_panel(Panel):
         box = layout.box()
         box.label(text="Cache / Bake")
         box.prop(s, "cache_directory")
+        if s.ui_show_advanced:
+            box.prop(s, "apply_scale_on_update")
         row = box.row(align=True)
         row.operator("fire_vfx.bake_all", text="Bake")
         row.operator("fire_vfx.free_all", text="Free")

@@ -1,0 +1,15 @@
+# Blender backups
+*.blend1
+*.blend2
+*.blend@
+
+# Blender cache (default from this add-on)
+fire_vfx_cache/
+**/fire_vfx_cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
